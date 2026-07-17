@@ -16,7 +16,11 @@ def enrich_comparison(master: pd.DataFrame) -> pd.DataFrame:
     comparison["lowest_total"] = comparison.groupby("line_key")["total_amount"].transform("min")
     comparison["is_lowest_offer"] = comparison["total_amount"].eq(comparison["lowest_total"]) & comparison["total_amount"].notna()
     comparison["variance_amount"] = comparison["total_amount"] - comparison["lowest_total"]
-    comparison["variance_percent"] = (comparison["variance_amount"] / comparison["lowest_total"]).replace([float("inf"), -float("inf")], pd.NA) * 100
+    comparison["variance_percent"] = pd.NA
+    has_nonzero_lowest = comparison["lowest_total"].notna() & comparison["lowest_total"].ne(0)
+    comparison.loc[has_nonzero_lowest, "variance_percent"] = (
+        comparison.loc[has_nonzero_lowest, "variance_amount"] / comparison.loc[has_nonzero_lowest, "lowest_total"] * 100
+    )
     return comparison
 
 

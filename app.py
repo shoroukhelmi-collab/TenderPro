@@ -20,6 +20,30 @@ st.set_page_config(page_title="TenderPro MVP", page_icon="📊", layout="wide")
 st.title("TenderPro")
 st.caption("Upload supplier BOQ Excel package files, review the detected mapping, generate a comparison, and export one workbook.")
 
+st.markdown(
+    """
+    <style>
+    .block-container { padding-top: 2rem; }
+    div[data-testid="stMetric"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.75rem;
+        padding: 0.85rem 1rem;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    div.stButton > button[kind="primary"] {
+        width: 100%;
+        min-height: 3.25rem;
+        font-size: 1.05rem;
+        font-weight: 700;
+    }
+    .supplier-card-title { margin: 0 0 0.15rem; }
+    .supplier-card-subtitle { color: #64748b; margin-bottom: 0.5rem; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 if "comparison_generated" not in st.session_state:
     st.session_state.comparison_generated = False
 if "supplier_group_count" not in st.session_state:
@@ -55,15 +79,22 @@ def _remove_supplier_group(group_id: int) -> None:
     st.session_state.comparison_generated = False
 
 
-def _package_detection_summary(files: list, supplier_name: str) -> tuple[list[str], list[str]]:
+def _package_detection_summary(files: list, supplier_name: str) -> tuple[list[str], list[dict[str, object]], int, bool]:
     package_names_by_file: list[tuple[str, str | None]] = []
     undetected_files: list[str] = []
-    warnings: list[str] = []
+    warnings: list[dict[str, object]] = []
+    imported_item_count = 0
+    commercial_columns_found = False
 
     for file in files:
         try:
             file.seek(0)
             detected_rows = read_all_excel_sheets(file, supplier_name)
+            imported_item_count += len(detected_rows)
+            commercial_columns_found = commercial_columns_found or (
+                not detected_rows.empty
+                and (detected_rows["unit_rate"].notna().any() or detected_rows["total_amount"].notna().any())
+            )
             packages = (
                 sorted(
                     detected_rows["package"]
@@ -80,7 +111,7 @@ def _package_detection_summary(files: list, supplier_name: str) -> tuple[list[st
             )
         except Exception as exc:  # Surface upload-card detection issues without changing import review behavior.
             packages = []
-            warnings.append(f"Could not inspect {file.name}: {exc}")
+            warnings.append({"type": "error", "message": f"Could not inspect {file.name}: {exc}"})
         finally:
             file.seek(0)
 
@@ -95,20 +126,24 @@ def _package_detection_summary(files: list, supplier_name: str) -> tuple[list[st
     duplicates = sorted({package for package in detected_package_names if detected_package_names.count(package) > 1})
     for package in duplicates:
         matching_files = [file_name for file_name, detected in package_names_by_file if detected == package]
-        warnings.append(f"Possible duplicate package '{package}' in: {', '.join(matching_files)}")
+        warnings.append({"type": "duplicate", "package": package, "files": matching_files})
     for file_name in undetected_files:
-        warnings.append(f"Package could not be detected for {file_name}.")
+        warnings.append({"type": "missing_package", "file": file_name})
 
-    return sorted(set(detected_package_names)), warnings
+    return sorted(set(detected_package_names)), warnings, imported_item_count, commercial_columns_found
 
 
 st.subheader("New Comparison / Upload Supplier Package Files")
 st.caption("Create one group per supplier, enter the supplier name, then upload all package files belonging to that supplier.")
+home_kpi_placeholder = st.container()
 supplier_groups = []
 for group_position, group_id in enumerate(st.session_state.supplier_group_ids, start=1):
     with st.container(border=True):
+        existing_name = st.session_state.get(f"supplier_group_name_{group_id}", "")
+        supplier_display_name = (existing_name or f"Supplier {group_position}").strip()
         title_col, action_col = st.columns([0.82, 0.18], vertical_alignment="center")
-        title_col.markdown(f"### Supplier {group_position}")
+        title_col.markdown(f"### {supplier_display_name}")
+        title_col.caption(f"Supplier group {group_position}")
         remove_disabled = st.session_state.supplier_group_count <= 1
         action_col.button(
             "Remove",
@@ -119,7 +154,7 @@ for group_position, group_id in enumerate(st.session_state.supplier_group_ids, s
             args=(group_id,),
         )
 
-        name_col, upload_col = st.columns([0.35, 0.65])
+        name_col, upload_col = st.columns([0.35, 0.65], vertical_alignment="top")
         supplier_name = name_col.text_input(
             "Supplier Name",
             key=f"supplier_group_name_{group_id}",
@@ -135,30 +170,82 @@ for group_position, group_id in enumerate(st.session_state.supplier_group_ids, s
         )
         files = files or []
 
-        count_col, package_col = st.columns([0.25, 0.75])
-        count_col.metric("Uploaded packages/files", len(files))
+        detected_packages: list[str] = []
+        package_warnings: list[dict[str, object]] = []
+        imported_item_count = 0
+        commercial_columns_found = False
         if files:
-            st.caption("Uploaded file names")
-            for file in files:
-                st.write(f"• {file.name}")
+            detected_packages, package_warnings, imported_item_count, commercial_columns_found = _package_detection_summary(files, supplier_display_name)
 
-            detected_packages, package_warnings = _package_detection_summary(files, supplier_display_name)
-            with package_col.container(border=True):
-                st.markdown("**Package detection summary**")
-                st.caption(f"{len(files)} file(s) uploaded for {supplier_display_name}.")
-                if detected_packages:
-                    st.write("Detected package names:")
-                    for package in detected_packages:
-                        st.write(f"• {package}")
-                else:
-                    st.info("No package names were detected from the uploaded files yet.")
-                for warning in package_warnings:
-                    st.warning(warning)
-        else:
-            package_col.info("Upload one or more Excel workbooks to detect package names for this supplier.")
+        files_col, package_col, status_col = st.columns([0.32, 0.38, 0.30], vertical_alignment="top")
+        with files_col.container(border=True):
+            st.markdown("**📁 Uploaded Files**")
+            st.metric("", f"{len(files)} File{'s' if len(files) != 1 else ''}", label_visibility="collapsed")
+            if files:
+                for file in files:
+                    st.write(f"✓ {file.name}")
+            else:
+                st.info("No files uploaded yet.")
 
-        supplier_groups.append({"name": supplier_display_name, "files": files})
+        with package_col.container(border=True):
+            st.markdown("**Detected Packages**")
+            if detected_packages:
+                for package in detected_packages:
+                    st.write(f"✓ {package}")
+            elif files:
+                st.info("No package names were detected from the uploaded files yet.")
+            else:
+                st.info("Upload files to detect package names.")
 
+        with status_col.container(border=True):
+            st.markdown("**Supplier Status**")
+            status_rows = [
+                (bool(files), "Files Uploaded", "No Files Uploaded"),
+                (bool(detected_packages), "Packages Detected", "Package Detection Incomplete"),
+                (commercial_columns_found, "Commercial Columns Found", "Missing Commercial Columns"),
+                (bool(files) and bool(detected_packages) and commercial_columns_found, "Ready for Comparison", "Not Ready for Comparison"),
+            ]
+            for ok, success, failure in status_rows:
+                icon = "✓" if ok else ("⚠" if "Package" in failure else "❌")
+                st.write(f"{icon} {success if ok else failure}")
+
+        for warning in package_warnings:
+            if warning["type"] == "duplicate":
+                with st.container(border=True):
+                    st.warning("⚠ Duplicate Package")
+                    st.markdown(f"**{warning['package']}**")
+                    st.write("Found in:")
+                    for file_name in warning["files"]:
+                        st.write(f"• {file_name}")
+            elif warning["type"] == "missing_package":
+                st.warning(f"⚠ Package detection incomplete for {warning['file']}.")
+            else:
+                st.warning(str(warning["message"]))
+
+        with st.container(border=True):
+            st.markdown("**Supplier Summary**")
+            summary_cols = st.columns(5)
+            summary_cols[0].metric("Supplier", supplier_display_name)
+            summary_cols[1].metric("Uploaded Files", len(files))
+            summary_cols[2].metric("Detected Packages", len(detected_packages))
+            summary_cols[3].metric("Imported Commercial Items", imported_item_count)
+            summary_cols[4].metric("Ready", "YES" if (files and detected_packages and commercial_columns_found) else "NO")
+
+        supplier_groups.append({
+            "name": supplier_display_name,
+            "files": files,
+            "detected_packages": detected_packages,
+            "imported_items": imported_item_count,
+            "ready": bool(files) and bool(detected_packages) and commercial_columns_found,
+        })
+
+with home_kpi_placeholder:
+    kpi_cols = st.columns(5)
+    kpi_cols[0].metric("Total Suppliers", len(supplier_groups))
+    kpi_cols[1].metric("Total Uploaded Files", sum(len(group["files"]) for group in supplier_groups))
+    kpi_cols[2].metric("Detected Packages", sum(len(group["detected_packages"]) for group in supplier_groups))
+    kpi_cols[3].metric("Imported Commercial Items", sum(group["imported_items"] for group in supplier_groups))
+    kpi_cols[4].metric("Ready Suppliers", sum(1 for group in supplier_groups if group["ready"]))
 
 st.button("+ Add Supplier", on_click=_add_supplier_group, type="secondary")
 use_sample_data = st.checkbox("Use sample data", value=False, help="Use two small generic supplier workbooks for a quick demo.")
@@ -239,7 +326,17 @@ if grouped_uploads:
     missing_all_prices = preview_data.empty or (preview_data["unit_rate"].isna().all() and preview_data["total_amount"].isna().all())
     if missing_all_prices:
         st.error("Comparison cannot be generated because no Unit Rate or Total Amount columns are mapped in the included files.")
-    if st.button("Generate Comparison", type="primary", disabled=(not confirm_preview or missing_all_prices)):
+    invalid_suppliers = [group["name"] for group in supplier_groups if not group["ready"]]
+    generate_disabled = not confirm_preview or missing_all_prices or bool(invalid_suppliers)
+    if missing_all_prices:
+        generate_help = "Map at least one Unit Rate or Total Amount column before generating the comparison."
+    elif invalid_suppliers:
+        generate_help = "Complete missing uploads, package detection, or commercial columns for: " + ", ".join(invalid_suppliers)
+    elif not confirm_preview:
+        generate_help = "Confirm the imported rows preview before generating the comparison."
+    else:
+        generate_help = "Generate the supplier comparison."
+    if st.button("Generate Comparison", type="primary", disabled=generate_disabled, help=generate_help):
         st.session_state.comparison_generated = True
 
     if st.session_state.comparison_generated and confirm_preview:

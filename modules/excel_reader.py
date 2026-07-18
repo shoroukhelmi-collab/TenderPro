@@ -10,23 +10,23 @@ import pandas as pd
 from modules.mapping import REQUIRED_COLUMNS, detect_columns
 
 SAMPLE_FILES = {
-    "Enext_BOQ.xlsx": [
-        {"Item No": "1.01", "Item Description": "GI cable tray 300 mm", "UOM": "m", "Qty": 120, "Rate": 42.5, "Supplier": "Enext"},
-        {"Item No": "1.02", "Item Description": "LV panel type A", "UOM": "no", "Qty": 2, "Rate": 8200, "Supplier": "Enext"},
-        {"Item No": "1.03", "Item Description": "Earthing pit complete", "UOM": "no", "Qty": 8, "Rate": None, "Supplier": "Enext"},
-        {"Item No": "1.04", "Item Description": "Copper cable 4C x 16 sq.mm", "UOM": "m", "Qty": 450, "Rate": 18.75, "Supplier": "Enext"},
+    "Supplier_A_BOQ.xlsx": [
+        {"Item No": "1.01", "Item Description": "Sample item alpha", "UOM": "unit", "Qty": 120, "Rate": 42.5, "Supplier": "Supplier A"},
+        {"Item No": "1.02", "Item Description": "Sample item beta", "UOM": "set", "Qty": 2, "Rate": 8200, "Supplier": "Supplier A"},
+        {"Item No": "1.03", "Item Description": "Sample item gamma", "UOM": "unit", "Qty": 8, "Rate": None, "Supplier": "Supplier A"},
+        {"Item No": "1.04", "Item Description": "Sample item delta", "UOM": "m", "Qty": 450, "Rate": 18.75, "Supplier": "Supplier A"},
     ],
-    "Valtria_BOQ.xlsx": [
-        {"Code": "1.01", "Description": "GI cable tray 300 mm", "Unit": "m", "Quantity": 120, "Unit Rate": 39.9, "Vendor": "Valtria"},
-        {"Code": "1.02", "Description": "LV panel type A", "Unit": "no", "Quantity": 2, "Unit Rate": 8750, "Vendor": "Valtria"},
-        {"Code": "1.03", "Description": "Earthing pit complete", "Unit": "no", "Quantity": 8, "Unit Rate": 610, "Vendor": "Valtria"},
-        {"Code": "1.04", "Description": "Copper cable 4C x 16 sq.mm", "Unit": "m", "Quantity": 450, "Unit Rate": 19.1, "Vendor": "Valtria"},
+    "Supplier_B_BOQ.xlsx": [
+        {"Code": "1.01", "Description": "Sample item alpha", "Unit": "unit", "Quantity": 120, "Unit Rate": 39.9, "Vendor": "Supplier B"},
+        {"Code": "1.02", "Description": "Sample item beta", "Unit": "set", "Quantity": 2, "Unit Rate": 8750, "Vendor": "Supplier B"},
+        {"Code": "1.03", "Description": "Sample item gamma", "Unit": "unit", "Quantity": 8, "Unit Rate": 610, "Vendor": "Supplier B"},
+        {"Code": "1.04", "Description": "Sample item delta", "Unit": "m", "Quantity": 450, "Unit Rate": 19.1, "Vendor": "Supplier B"},
     ],
 }
 
 
 def create_sample_files(directory: str | Path = "uploads") -> list[Path]:
-    """Create sample vendor BOQs when the upload folder has no spreadsheets."""
+    """Create sample supplier BOQs when the upload folder has no spreadsheets."""
     upload_dir = Path(directory)
     upload_dir.mkdir(parents=True, exist_ok=True)
     existing = list(upload_dir.glob("*.xlsx"))

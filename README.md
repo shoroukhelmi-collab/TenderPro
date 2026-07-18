@@ -5,12 +5,12 @@ TenderPro is a basic Streamlit MVP for supplier BOQ comparison.
 ## What the MVP does
 
 - Upload multiple supplier Excel files (`.xlsx`).
-- Detect common BOQ columns automatically.
-- Compare suppliers item by item.
-- Show the lowest price for each item.
-- Show missing prices.
-- Show supplier ranking.
-- Export the final comparison to Excel.
+- Detect common BOQ columns automatically and let users review supplier names, worksheets, header rows, and mappings before processing.
+- Normalize uploaded BOQs into a master query.
+- Compare suppliers item by item, including lowest prices, missing prices, variance, and visible outlier flags.
+- Show dashboard KPIs, supplier summaries, package summaries, missing items, and outliers.
+- Exclude or restore detected outliers from totals without deleting raw data.
+- Export one Excel workbook with dashboard, master query, summaries, pivots, missing items, outliers, and raw data.
 
 The app intentionally does **not** include AI, login, templates, databases, or advanced architecture. Supplier names are generic (`Supplier 1`, `Supplier 2`, etc.) so the comparison stays simple and anonymized.
 

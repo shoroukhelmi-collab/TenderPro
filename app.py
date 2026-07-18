@@ -12,10 +12,12 @@ from modules.mapping import REQUIRED_COLUMNS
 st.set_page_config(page_title="TenderPro MVP", page_icon="📊", layout="wide")
 
 st.title("TenderPro")
-st.caption("Upload supplier BOQ Excel files, review the detected mapping, generate a comparison, and export one workbook.")
+st.caption("Upload supplier BOQ Excel package files, review the detected mapping, generate a comparison, and export one workbook.")
 
 if "comparison_generated" not in st.session_state:
     st.session_state.comparison_generated = False
+if "supplier_group_count" not in st.session_state:
+    st.session_state.supplier_group_count = 1
 
 st.markdown(
     """
@@ -25,26 +27,46 @@ st.markdown(
     """
 )
 
-uploaded_files = st.file_uploader(
-    "New Comparison / Upload Supplier Files",
-    type=["xlsx"],
-    accept_multiple_files=True,
-    help="Upload one Excel workbook per supplier. Supplier names and column mappings can be edited before comparison.",
-)
+
+def _add_supplier_group() -> None:
+    st.session_state.supplier_group_count += 1
+    st.session_state.comparison_generated = False
+
+st.subheader("New Comparison / Upload Supplier Package Files")
+st.caption("Create one group per supplier, enter the supplier name, then upload all package files belonging to that supplier.")
+supplier_groups = []
+for group_index in range(1, st.session_state.supplier_group_count + 1):
+    with st.container(border=True):
+        st.markdown(f"**Supplier {group_index}**")
+        supplier_name = st.text_input("Supplier Name", key=f"supplier_group_name_{group_index}", placeholder=f"Supplier {group_index}")
+        files = st.file_uploader(
+            "Upload multiple Excel files",
+            type=["xlsx"],
+            accept_multiple_files=True,
+            key=f"supplier_group_files_{group_index}",
+            help="Upload all package workbooks for this supplier. The supplier name is taken only from this group field.",
+        )
+        if files:
+            st.write("Files:", ", ".join(file.name for file in files))
+        supplier_groups.append({"name": (supplier_name or f"Supplier {group_index}").strip(), "files": files or []})
+
+st.button("Add another supplier", on_click=_add_supplier_group)
 use_sample_data = st.checkbox("Use sample data", value=False, help="Use two small generic supplier workbooks for a quick demo.")
 
 normalized_data = None
 reviews: list[WorkbookReview] = []
+grouped_uploads = [(group["name"], file) for group in supplier_groups for file in group["files"]]
+uploaded_files = [file for _, file in grouped_uploads]
 
-if uploaded_files:
+if grouped_uploads:
     st.subheader("File review")
-    st.caption("Confirm detected supplier names and review every worksheet before previewing the imported BOQ rows.")
+    st.caption("Confirm each supplier group and review every worksheet before previewing the imported BOQ rows.")
     summary_rows = []
-    for index, uploaded_file in enumerate(uploaded_files, start=1):
+    for index, (supplier_name, uploaded_file) in enumerate(grouped_uploads, start=1):
         uploaded_file.seek(0)
-        review = inspect_excel_file(uploaded_file)
-        with st.expander(f"{review.file_name} — detected as {review.supplier_name}", expanded=True):
-            supplier_name = st.text_input("Supplier name", review.supplier_name, key=f"supplier_{index}")
+        review = inspect_excel_file(uploaded_file, supplier_name=supplier_name)
+        with st.expander(f"{supplier_name} — {review.file_name}", expanded=True):
+            st.write("Supplier name:", supplier_name)
             st.write("Detected worksheet names:", ", ".join(review.worksheet_names))
             edited_sheets = []
             for sheet_index, sheet in enumerate(review.worksheets, start=1):
@@ -116,7 +138,7 @@ elif use_sample_data:
     normalized_data = read_sample_excels()
     st.session_state.comparison_generated = True
 else:
-    st.info("Upload supplier Excel files with the button above, or tick **Use sample data** to try the MVP.")
+    st.info("Create supplier groups and upload Excel package files with the controls above, or tick **Use sample data** to try the MVP.")
 
 render_home_kpis(normalized_data, len(uploaded_files) if uploaded_files else (2 if use_sample_data else 0))
 

@@ -11,7 +11,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from modules.mapping import REQUIRED_COLUMNS, detect_columns
 
-COMMERCIAL_COLUMNS = (*REQUIRED_COLUMNS, "package", "supplier")
+COMMERCIAL_COLUMNS = (*REQUIRED_COLUMNS, "package", "supplier", "file_name", "worksheet")
 HEADER_SCAN_ROWS = 60
 MIN_HEADER_ROWS = 1
 MAX_HEADER_ROWS = 5
@@ -275,6 +275,8 @@ def _read_sheet(file: str | Path | BinaryIO, supplier: str, sheet: str | int, he
     package_col = mapping.get("package") or _find_package_column(raw.columns)
     normalized["package"] = raw[package_col] if package_col in raw.columns else pd.NA
     normalized["supplier"] = supplier
+    normalized["file_name"] = Path(str(getattr(file, "name", str(file)))).name
+    normalized["worksheet"] = str(sheet)
     normalized["item_no"] = normalized["item_no"].apply(lambda value: _clean_cell(value) if pd.notna(value) else pd.NA)
     normalized["description"] = normalized["description"].apply(lambda value: _clean_cell(value) if pd.notna(value) else pd.NA)
     normalized["unit"] = normalized["unit"].apply(lambda value: _clean_cell(value) if pd.notna(value) else pd.NA)

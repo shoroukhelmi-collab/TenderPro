@@ -1,47 +1,45 @@
 import pandas as pd
 
-from modules.comparison_engine import ComparisonEngine, generate_master_comparison
+from modules.comparison_engine import build_comparison, supplier_ranking
 
 
-def test_compare_supports_unlimited_dynamic_suppliers_and_metrics():
+def test_build_comparison_shows_lowest_price_and_missing_prices():
     data = pd.DataFrame([
-        {"item_no": "1", "description": "Desk", "unit": "ea", "quantity": 2, "unit_rate": 100, "total_amount": 200, "vendor": "Alpha"},
-        {"item_no": "1", "description": "Desk", "unit": "ea", "quantity": 2, "unit_rate": 90, "total_amount": 180, "vendor": "Beta"},
-        {"item_no": "1", "description": "Desk", "unit": "ea", "quantity": 2, "unit_rate": None, "total_amount": None, "vendor": "Gamma"},
+        {"item_no": "1", "description": "Desk", "unit": "ea", "quantity": 2, "unit_rate": 100, "total_amount": 200, "supplier": "Supplier 1"},
+        {"item_no": "1", "description": "Desk", "unit": "ea", "quantity": 2, "unit_rate": 90, "total_amount": 180, "supplier": "Supplier 2"},
+        {"item_no": "1", "description": "Desk", "unit": "ea", "quantity": 2, "unit_rate": None, "total_amount": None, "supplier": "Supplier 3"},
     ])
 
-    result = ComparisonEngine().compare(data)
+    result = build_comparison(data)
 
     row = result.iloc[0]
-    assert row["lowest_unit_rate"] == 90
-    assert row["lowest_total_amount"] == 180
-    assert row["lowest_supplier"] == "Beta"
+    assert row["lowest_supplier"] == "Supplier 2"
+    assert row["lowest_price"] == 180
     assert row["missing_prices"] == 1
-    assert row["number_of_quotations"] == 3
-    assert round(row["variance_percent"], 2) == 11.11
-    assert {"Alpha total_amount", "Beta total_amount", "Gamma total_amount"}.issubset(result.columns)
+    assert {"Supplier 1 price", "Supplier 2 price", "Supplier 3 price"}.issubset(result.columns)
 
 
 def test_missing_item_number_matches_by_description_and_unit():
     data = pd.DataFrame([
-        {"item_no": None, "description": "Generic service", "unit": "lot", "quantity": 1, "unit_rate": 50, "total_amount": 50, "vendor": "A"},
-        {"item_no": "", "description": "Generic service", "unit": "lot", "quantity": 1, "unit_rate": 45, "total_amount": 45, "vendor": "B"},
+        {"item_no": None, "description": "Generic service", "unit": "lot", "quantity": 1, "unit_rate": 50, "total_amount": 50, "supplier": "Supplier 1"},
+        {"item_no": "", "description": "Generic service", "unit": "lot", "quantity": 1, "unit_rate": 45, "total_amount": 45, "supplier": "Supplier 2"},
     ])
 
-    result = generate_master_comparison(data)
+    result = build_comparison(data)
 
     assert len(result) == 1
-    assert result.iloc[0]["lowest_supplier"] == "B"
-    assert result.iloc[0]["number_of_quotations"] == 2
+    assert result.iloc[0]["lowest_supplier"] == "Supplier 2"
 
 
-def test_configurable_matching_rules_can_ignore_item_number():
+def test_supplier_ranking_orders_by_total_and_missing_prices():
     data = pd.DataFrame([
-        {"item_no": "A-1", "description": "Common item", "unit": "kg", "quantity": 3, "unit_rate": 10, "total_amount": 30, "vendor": "A"},
-        {"item_no": "B-9", "description": "Common item", "unit": "kg", "quantity": 3, "unit_rate": 9, "total_amount": 27, "vendor": "B"},
+        {"item_no": "1", "description": "A", "unit": "ea", "quantity": 1, "unit_rate": 20, "total_amount": 20, "supplier": "Supplier 1"},
+        {"item_no": "1", "description": "A", "unit": "ea", "quantity": 1, "unit_rate": 10, "total_amount": 10, "supplier": "Supplier 2"},
+        {"item_no": "2", "description": "B", "unit": "ea", "quantity": 1, "unit_rate": None, "total_amount": None, "supplier": "Supplier 2"},
     ])
 
-    result = ComparisonEngine(matching_rules=("description", "unit")).compare(data)
+    ranking = supplier_ranking(data)
 
-    assert len(result) == 1
-    assert result.iloc[0]["lowest_total_amount"] == 27
+    assert ranking.iloc[0]["supplier"] == "Supplier 2"
+    assert ranking.iloc[0]["rank"] == 1
+    assert ranking.iloc[0]["missing_prices"] == 1

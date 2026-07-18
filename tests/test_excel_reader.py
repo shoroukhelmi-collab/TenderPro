@@ -237,3 +237,20 @@ def test_item_no_code_header_populates_item_number():
     data = read_excel_file(file)
 
     assert data.iloc[0]["item_no"] == "FA-01"
+
+
+def test_uppercase_item_column_populates_item_no_without_dataframe_index():
+    file = _book({"BOQ": [
+        ["ITEM", "DESCRIPTION", "UNIT", "QTY", "RATE", "AMOUNT"],
+        [5, "50mm", "m", 50, 71, 3550],
+    ]})
+
+    data = read_excel_file(file)
+
+    assert data.index.tolist() == [0]
+    assert data.iloc[0]["item_no"] == "5"
+    assert data.iloc[0]["description"] == "50mm"
+    assert data.iloc[0]["unit"] == "m"
+    assert data.iloc[0]["quantity"] == 50
+    assert data.iloc[0]["unit_rate"] == 71
+    assert data.iloc[0]["total_amount"] == 3550

@@ -234,7 +234,7 @@ if grouped_uploads:
     preview_data = read_reviewed_excels(uploaded_files, reviews)
     st.subheader("Imported rows preview")
     st.caption("Review the first 20 commercial BOQ items. The comparison will not be generated until you confirm this preview.")
-    st.dataframe(preview_data.head(20), use_container_width=True)
+    st.dataframe(preview_data.head(20), use_container_width=True, hide_index=True)
     confirm_preview = st.checkbox("I confirm the preview is ready for comparison", key="confirm_preview")
     missing_all_prices = preview_data.empty or (preview_data["unit_rate"].isna().all() and preview_data["total_amount"].isna().all())
     if missing_all_prices:

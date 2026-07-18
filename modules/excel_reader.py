@@ -270,14 +270,14 @@ def _read_sheet(file: str | Path | BinaryIO, supplier: str, sheet: str | int, he
     raw = raw.dropna(how="all")
     normalized = pd.DataFrame(index=raw.index)
     for canonical in REQUIRED_COLUMNS:
-        source = mapping.get(canonical)
-        normalized[canonical] = raw[source] if source in raw.columns else pd.NA
-    package_col = mapping.get("package") or _find_package_column(raw.columns)
+        source = _resolve_mapped_source(raw.columns, mapping.get(canonical))
+        normalized[canonical] = raw[source] if source is not None else pd.NA
+    package_col = _resolve_mapped_source(raw.columns, mapping.get("package")) or _find_package_column(raw.columns)
     normalized["package"] = raw[package_col] if package_col in raw.columns else pd.NA
     normalized["supplier"] = supplier
     normalized["file_name"] = Path(str(getattr(file, "name", str(file)))).name
     normalized["worksheet"] = str(sheet)
-    normalized["item_no"] = normalized["item_no"].apply(lambda value: _clean_cell(value) if pd.notna(value) else pd.NA)
+    normalized["item_no"] = normalized["item_no"].apply(lambda value: _clean_item_no(value) if pd.notna(value) else pd.NA)
     normalized["description"] = normalized["description"].apply(lambda value: _clean_cell(value) if pd.notna(value) else pd.NA)
     normalized["unit"] = normalized["unit"].apply(lambda value: _clean_cell(value) if pd.notna(value) else pd.NA)
     for col in ("quantity", "unit_rate", "total_amount"):
@@ -325,6 +325,25 @@ def _section_heading(row: pd.Series, raw_text: str) -> str | None:
     return None
 
 
+def _resolve_mapped_source(columns: Iterable[object], source: str | None) -> str | None:
+    """Return the real worksheet column matching a stored mapping source.
+
+    Only worksheet header names are considered here. The pandas row index is never
+    inspected or promoted as a BOQ item number.
+    """
+    if not source:
+        return None
+    column_list = [str(column) for column in columns]
+    if source in column_list:
+        return source
+    cleaned_source = re.sub(r"[^a-z0-9]+", " ", str(source).casefold()).strip()
+    for column in column_list:
+        cleaned_column = re.sub(r"[^a-z0-9]+", " ", str(column).casefold()).strip()
+        if cleaned_column == cleaned_source:
+            return column
+    return None
+
+
 def _find_package_column(columns: Iterable[object]) -> str | None:
     for col in columns:
         cleaned = re.sub(r"[^a-z0-9]+", " ", str(col).casefold()).strip()
@@ -342,6 +361,15 @@ def _clean_cell(value: object) -> str:
     if pd.isna(value):
         return ""
     return re.sub(r"\s+", " ", str(value).strip())
+
+
+def _clean_item_no(value: object) -> str:
+    """Preserve BOQ item numbers from Excel without pandas float artifacts."""
+    if pd.isna(value):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return _clean_cell(value)
 
 
 def _rewind(file: str | Path | BinaryIO) -> None:

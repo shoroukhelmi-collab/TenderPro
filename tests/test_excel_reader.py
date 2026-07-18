@@ -106,3 +106,40 @@ def test_invalid_descriptive_rows_are_excluded():
     data = read_excel_file(file)
 
     assert data["description"].tolist() == ["Valid item"]
+
+
+def test_price_columns_detect_with_currency_suffixes():
+    file = _book({"BOQ": [
+        ["Ref", "Particulars", "UOM", "BOQ Qty", "Unit Rate (AED)", "Total Amount (AED)"],
+        ["1", "Cable containment", "m", 10, 12.5, 125],
+    ]})
+
+    review = inspect_excel_file(file)
+    mapping = review.worksheets[0].column_mapping
+    data = read_excel_file(file, review.supplier_name, "BOQ", review.worksheets[0].header_row - 1, mapping)
+
+    assert mapping["unit_rate"] == "Unit Rate (AED)"
+    assert mapping["total_amount"] == "Total Amount (AED)"
+    assert data.iloc[0]["unit_rate"] == 12.5
+    assert data.iloc[0]["total_amount"] == 125
+
+
+def test_non_package_headings_are_not_inherited_as_packages():
+    file = _book({"BOQ": [
+        ["Item", "Description", "Unit", "Quantity", "Unit Rate", "Total"],
+        [None, "Method of Measurements", None, None, None, None],
+        [None, "General Notes", None, None, None, None],
+        [None, "Specifications", None, None, None, None],
+        [None, "Scope of Work", None, None, None, None],
+        [None, "Section A - Civil Works", None, None, None, None],
+        ["A1", "Excavation", "m3", 5, 3, 15],
+    ]})
+
+    data = read_excel_file(file)
+
+    assert len(data) == 1
+    assert data.iloc[0]["package"] == "Section A - Civil Works"
+
+
+def test_supplier_name_removes_leading_project_number_revision_boq_and_extension():
+    assert detect_supplier_name("3661 CMC04 FP Rev 2.xlsx") == "CMC04 FP"

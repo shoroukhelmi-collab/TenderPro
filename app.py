@@ -5,7 +5,13 @@ from __future__ import annotations
 import streamlit as st
 
 from modules.dashboard import render_dashboard, render_home_kpis
-from modules.excel_reader import WorkbookReview, inspect_excel_file, read_reviewed_excels, read_sample_excels
+from modules.excel_reader import (
+    WorkbookReview,
+    inspect_excel_file,
+    read_all_excel_sheets,
+    read_reviewed_excels,
+    read_sample_excels,
+)
 from modules.export import export_comparison
 from modules.mapping import REQUIRED_COLUMNS
 
@@ -18,6 +24,10 @@ if "comparison_generated" not in st.session_state:
     st.session_state.comparison_generated = False
 if "supplier_group_count" not in st.session_state:
     st.session_state.supplier_group_count = 1
+if "supplier_group_ids" not in st.session_state:
+    st.session_state.supplier_group_ids = list(range(1, st.session_state.supplier_group_count + 1))
+if "next_supplier_group_id" not in st.session_state:
+    st.session_state.next_supplier_group_id = max(st.session_state.supplier_group_ids, default=0) + 1
 
 st.markdown(
     """
@@ -29,28 +39,128 @@ st.markdown(
 
 
 def _add_supplier_group() -> None:
-    st.session_state.supplier_group_count += 1
+    st.session_state.supplier_group_ids.append(st.session_state.next_supplier_group_id)
+    st.session_state.next_supplier_group_id += 1
+    st.session_state.supplier_group_count = len(st.session_state.supplier_group_ids)
     st.session_state.comparison_generated = False
+
+
+def _remove_supplier_group(group_id: int) -> None:
+    if len(st.session_state.supplier_group_ids) <= 1:
+        return
+    st.session_state.supplier_group_ids = [
+        supplier_id for supplier_id in st.session_state.supplier_group_ids if supplier_id != group_id
+    ]
+    st.session_state.supplier_group_count = len(st.session_state.supplier_group_ids)
+    st.session_state.comparison_generated = False
+
+
+def _package_detection_summary(files: list, supplier_name: str) -> tuple[list[str], list[str]]:
+    package_names_by_file: list[tuple[str, str | None]] = []
+    undetected_files: list[str] = []
+    warnings: list[str] = []
+
+    for file in files:
+        try:
+            file.seek(0)
+            detected_rows = read_all_excel_sheets(file, supplier_name)
+            packages = (
+                sorted(
+                    detected_rows["package"]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .replace("", None)
+                    .dropna()
+                    .unique()
+                    .tolist()
+                )
+                if "package" in detected_rows
+                else []
+            )
+        except Exception as exc:  # Surface upload-card detection issues without changing import review behavior.
+            packages = []
+            warnings.append(f"Could not inspect {file.name}: {exc}")
+        finally:
+            file.seek(0)
+
+        if packages:
+            for package in packages:
+                package_names_by_file.append((file.name, package))
+        else:
+            package_names_by_file.append((file.name, None))
+            undetected_files.append(file.name)
+
+    detected_package_names = [package for _, package in package_names_by_file if package]
+    duplicates = sorted({package for package in detected_package_names if detected_package_names.count(package) > 1})
+    for package in duplicates:
+        matching_files = [file_name for file_name, detected in package_names_by_file if detected == package]
+        warnings.append(f"Possible duplicate package '{package}' in: {', '.join(matching_files)}")
+    for file_name in undetected_files:
+        warnings.append(f"Package could not be detected for {file_name}.")
+
+    return sorted(set(detected_package_names)), warnings
+
 
 st.subheader("New Comparison / Upload Supplier Package Files")
 st.caption("Create one group per supplier, enter the supplier name, then upload all package files belonging to that supplier.")
 supplier_groups = []
-for group_index in range(1, st.session_state.supplier_group_count + 1):
+for group_position, group_id in enumerate(st.session_state.supplier_group_ids, start=1):
     with st.container(border=True):
-        st.markdown(f"**Supplier {group_index}**")
-        supplier_name = st.text_input("Supplier Name", key=f"supplier_group_name_{group_index}", placeholder=f"Supplier {group_index}")
-        files = st.file_uploader(
-            "Upload multiple Excel files",
+        title_col, action_col = st.columns([0.82, 0.18], vertical_alignment="center")
+        title_col.markdown(f"### Supplier {group_position}")
+        remove_disabled = st.session_state.supplier_group_count <= 1
+        action_col.button(
+            "Remove",
+            key=f"remove_supplier_group_{group_id}",
+            disabled=remove_disabled,
+            help="At least one supplier group is required." if remove_disabled else "Remove this supplier group.",
+            on_click=_remove_supplier_group,
+            args=(group_id,),
+        )
+
+        name_col, upload_col = st.columns([0.35, 0.65])
+        supplier_name = name_col.text_input(
+            "Supplier Name",
+            key=f"supplier_group_name_{group_id}",
+            placeholder=f"Supplier {group_position}",
+        )
+        supplier_display_name = (supplier_name or f"Supplier {group_position}").strip()
+        files = upload_col.file_uploader(
+            "Upload Excel package files",
             type=["xlsx"],
             accept_multiple_files=True,
-            key=f"supplier_group_files_{group_index}",
+            key=f"supplier_group_files_{group_id}",
             help="Upload all package workbooks for this supplier. The supplier name is taken only from this group field.",
         )
-        if files:
-            st.write("Files:", ", ".join(file.name for file in files))
-        supplier_groups.append({"name": (supplier_name or f"Supplier {group_index}").strip(), "files": files or []})
+        files = files or []
 
-st.button("Add another supplier", on_click=_add_supplier_group)
+        count_col, package_col = st.columns([0.25, 0.75])
+        count_col.metric("Uploaded packages/files", len(files))
+        if files:
+            st.caption("Uploaded file names")
+            for file in files:
+                st.write(f"• {file.name}")
+
+            detected_packages, package_warnings = _package_detection_summary(files, supplier_display_name)
+            with package_col.container(border=True):
+                st.markdown("**Package detection summary**")
+                st.caption(f"{len(files)} file(s) uploaded for {supplier_display_name}.")
+                if detected_packages:
+                    st.write("Detected package names:")
+                    for package in detected_packages:
+                        st.write(f"• {package}")
+                else:
+                    st.info("No package names were detected from the uploaded files yet.")
+                for warning in package_warnings:
+                    st.warning(warning)
+        else:
+            package_col.info("Upload one or more Excel workbooks to detect package names for this supplier.")
+
+        supplier_groups.append({"name": supplier_display_name, "files": files})
+
+
+st.button("+ Add Supplier", on_click=_add_supplier_group, type="secondary")
 use_sample_data = st.checkbox("Use sample data", value=False, help="Use two small generic supplier workbooks for a quick demo.")
 
 normalized_data = None

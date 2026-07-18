@@ -183,3 +183,32 @@ def test_non_package_headings_are_not_inherited_as_packages():
 
 def test_supplier_name_removes_leading_project_number_revision_boq_and_extension():
     assert detect_supplier_name("3661 CMC04 FP Rev 2.xlsx") == "CMC04 FP"
+
+
+def test_item_number_column_is_not_confused_with_item_description():
+    file = _book({"BOQ": [
+        ["Item Description", "UOM", "Qty", "Rate", "Amount"],
+        ["Door set", "ea", 2, 100, 200],
+    ]})
+
+    review = inspect_excel_file(file)
+    mapping = review.worksheets[0].column_mapping
+
+    assert mapping.get("description") == "Item Description"
+    assert mapping.get("item_no") is None
+
+
+def test_code_column_populates_item_number_with_item_description_present():
+    file = _book({"BOQ": [
+        ["Code", "Item Description", "UOM", "Qty", "Rate", "Amount"],
+        ["A-100", "Door set", "ea", 2, 100, 200],
+    ]})
+
+    data = read_excel_file(file)
+
+    assert data.iloc[0]["item_no"] == "A-100"
+    assert data.iloc[0]["description"] == "Door set"
+
+
+def test_supplier_name_removes_generic_filename_noise_without_hardcoding_supplier():
+    assert detect_supplier_name("987654 Alpha-Beta_Commercial BOQ Quotation R1.xlsx") == "Alpha Beta"

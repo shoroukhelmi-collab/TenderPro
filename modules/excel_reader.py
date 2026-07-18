@@ -17,7 +17,10 @@ MIN_HEADER_ROWS = 1
 MAX_HEADER_ROWS = 5
 TOTAL_PATTERNS = re.compile(r"\b(sub\s*total|subtotal|grand\s*total|total|summary|carry\s*forward)\b", re.I)
 NOTE_PATTERNS = re.compile(r"\b(note|notes|description of works|general requirement|preamble|specification|specifications|tender|boq|bill of quantities|method of measurements?|methods of measurements?|scope of work)\b", re.I)
-REVISION_PATTERNS = re.compile(r"\b(rev(?:ision)?\.?\s*[a-z0-9]+|r\d+|v\d+|final|draft|copy|priced|quote|quotation|boq|bill of quantities)\b", re.I)
+FILENAME_NOISE_PATTERNS = re.compile(
+    r"\b(rev(?:ision)?\.?\s*[a-z0-9]+|r\d+|v\d+|final|draft|copy|priced|quote|quotation|boq|bill of quantities|tender|commercial)\b",
+    re.I,
+)
 NON_PACKAGE_HEADINGS = re.compile(r"^\s*(method of measurements?|methods of measurements?|general notes?|specifications?|scope of work)\s*$", re.I)
 PACKAGE_FROM_HEADINGS = "Section headings"
 SECTION_PATTERNS = re.compile(r"\b(section|package|trade|bill\s*no|part|division|schedule)\b", re.I)
@@ -118,9 +121,9 @@ def inspect_excel_file(file: str | Path | BinaryIO, supplier_name: str | None = 
 def detect_supplier_name(file_name: str | Path) -> str:
     """Create a user-editable supplier name from an uploaded filename."""
     stem = Path(str(file_name)).stem
-    cleaned = REVISION_PATTERNS.sub(" ", stem)
-    cleaned = re.sub(r"^\s*\d+[\s_\-]+", "", cleaned)
-    cleaned = re.sub(r"[_\-]+", " ", cleaned)
+    cleaned = re.sub(r"[_\-]+", " ", stem)
+    cleaned = FILENAME_NOISE_PATTERNS.sub(" ", cleaned)
+    cleaned = re.sub(r"(?:^|\s)\d{3,}[a-z0-9]*(?=\s|$)", " ", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_.,")
     return cleaned or "Supplier"
 

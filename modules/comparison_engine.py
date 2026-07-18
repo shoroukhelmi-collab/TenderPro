@@ -6,7 +6,7 @@ import re
 
 import pandas as pd
 
-CANONICAL_COLUMNS = ("item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "supplier")
+CANONICAL_COLUMNS = ("item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "package", "supplier")
 OUTLIER_RATIO_THRESHOLD = 1.5
 OUTLIER_MIN_PRICED_SUPPLIERS = 3
 
@@ -26,7 +26,9 @@ def prepare_boq(data: pd.DataFrame) -> pd.DataFrame:
     frame.loc[missing_total, "total_amount"] = frame.loc[missing_total, "quantity"] * frame.loc[missing_total, "unit_rate"]
     frame = frame.dropna(subset=["item_no", "description"], how="all").reset_index(drop=True)
     frame["match_key"] = frame.apply(_match_key, axis=1)
-    frame["package"] = frame.apply(_package_key, axis=1)
+    frame["package"] = frame["package"].fillna("").astype(str).str.strip()
+    missing_package = frame["package"].eq("")
+    frame.loc[missing_package, "package"] = frame.loc[missing_package].apply(_package_key, axis=1)
     frame["missing_price"] = frame["unit_rate"].isna() | frame["total_amount"].isna()
     return frame
 

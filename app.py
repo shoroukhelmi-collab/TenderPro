@@ -38,47 +38,49 @@ reviews: list[WorkbookReview] = []
 
 if uploaded_files:
     st.subheader("File review")
-    st.caption("Confirm each detected supplier name, worksheet, header row, column mapping, and imported row count before generating.")
+    st.caption("Confirm detected supplier names and review every worksheet before previewing the imported BOQ rows.")
     for index, uploaded_file in enumerate(uploaded_files, start=1):
         uploaded_file.seek(0)
-        review = inspect_excel_file(uploaded_file, f"Supplier {index}")
+        review = inspect_excel_file(uploaded_file)
         with st.expander(f"{review.file_name} — detected as {review.supplier_name}", expanded=True):
             supplier_name = st.text_input("Supplier name", review.supplier_name, key=f"supplier_{index}")
-            worksheet = st.selectbox("Worksheet", review.worksheet_names, index=review.worksheet_names.index(review.selected_worksheet), key=f"sheet_{index}")
-            header_row = st.number_input("Detected header row", min_value=1, value=review.header_row, step=1, key=f"header_{index}")
             st.write("Detected worksheet names:", ", ".join(review.worksheet_names))
-            column_options = [None, *review.columns]
-            mapping = {}
-            mapping_cols = st.columns(3)
-            for field_index, canonical in enumerate(REQUIRED_COLUMNS):
-                current = review.column_mapping.get(canonical)
-                selected_index = column_options.index(current) if current in column_options else 0
-                mapping[canonical] = mapping_cols[field_index % 3].selectbox(
-                    canonical.replace("_", " ").title(),
-                    column_options,
-                    index=selected_index,
-                    key=f"mapping_{index}_{canonical}",
-                )
-            st.metric("Number of imported rows", review.imported_rows)
-            reviews.append(
-                WorkbookReview(
-                    file_name=review.file_name,
-                    supplier_name=supplier_name,
-                    worksheet_names=review.worksheet_names,
-                    selected_worksheet=worksheet,
-                    header_row=int(header_row),
-                    column_mapping=mapping,
-                    imported_rows=review.imported_rows,
-                    columns=review.columns,
-                )
-            )
-    if st.button("Generate Comparison", type="primary"):
+            edited_sheets = []
+            for sheet_index, sheet in enumerate(review.worksheets, start=1):
+                st.markdown(f"**Worksheet: {sheet.sheet_name}**")
+                header_row = st.number_input("Detected header row", min_value=1, value=sheet.header_row, step=1, key=f"header_{index}_{sheet_index}")
+                st.write("Detected columns:", ", ".join(sheet.columns) or "None")
+                st.write("Package detection:", sheet.package_source)
+                if sheet.section_headings:
+                    st.write("Detected section headings:", ", ".join(sheet.section_headings))
+                column_options = [None, *sheet.columns]
+                mapping = {}
+                mapping_cols = st.columns(3)
+                for field_index, canonical in enumerate(REQUIRED_COLUMNS):
+                    current = sheet.column_mapping.get(canonical)
+                    selected_index = column_options.index(current) if current in column_options else 0
+                    mapping[canonical] = mapping_cols[field_index % 3].selectbox(
+                        canonical.replace("_", " ").title(),
+                        column_options,
+                        index=selected_index,
+                        key=f"mapping_{index}_{sheet_index}_{canonical}",
+                    )
+                st.metric("Imported item count", sheet.imported_rows)
+                st.metric("Excluded row count", sheet.excluded_rows)
+                edited_sheets.append(type(sheet)(sheet.sheet_name, int(header_row), mapping, sheet.imported_rows, sheet.excluded_rows, sheet.columns, sheet.package_source, sheet.section_headings))
+            reviews.append(WorkbookReview(review.file_name, supplier_name, review.worksheet_names, review.selected_worksheet, review.header_row, review.column_mapping, review.imported_rows, review.columns, review.excluded_rows, review.package_source, review.section_headings, edited_sheets))
+    for uploaded_file in uploaded_files:
+        uploaded_file.seek(0)
+    preview_data = read_reviewed_excels(uploaded_files, reviews)
+    st.subheader("Imported rows preview")
+    st.caption("Review the first 20 commercial BOQ items. The comparison will not be generated until you confirm this preview.")
+    st.dataframe(preview_data.head(20), use_container_width=True)
+    confirm_preview = st.checkbox("I confirm the preview is ready for comparison", key="confirm_preview")
+    if st.button("Generate Comparison", type="primary", disabled=not confirm_preview):
         st.session_state.comparison_generated = True
 
-    if st.session_state.comparison_generated:
-        for uploaded_file in uploaded_files:
-            uploaded_file.seek(0)
-        normalized_data = read_reviewed_excels(uploaded_files, reviews)
+    if st.session_state.comparison_generated and confirm_preview:
+        normalized_data = preview_data
 elif use_sample_data:
     normalized_data = read_sample_excels()
     st.session_state.comparison_generated = True

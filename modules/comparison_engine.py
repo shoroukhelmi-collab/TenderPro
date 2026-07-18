@@ -6,7 +6,7 @@ import re
 
 import pandas as pd
 
-CANONICAL_COLUMNS = ("item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "package", "supplier")
+CANONICAL_COLUMNS = ("item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "package", "supplier", "file_name", "worksheet")
 OUTLIER_RATIO_THRESHOLD = 1.5
 OUTLIER_MIN_PRICED_SUPPLIERS = 3
 
@@ -25,10 +25,10 @@ def prepare_boq(data: pd.DataFrame) -> pd.DataFrame:
     missing_total = frame["total_amount"].isna() & frame["quantity"].notna() & frame["unit_rate"].notna()
     frame.loc[missing_total, "total_amount"] = frame.loc[missing_total, "quantity"] * frame.loc[missing_total, "unit_rate"]
     frame = frame.dropna(subset=["item_no", "description"], how="all").reset_index(drop=True)
-    frame["match_key"] = frame.apply(_match_key, axis=1)
     frame["package"] = frame["package"].fillna("").astype(str).str.strip()
     missing_package = frame["package"].eq("")
     frame.loc[missing_package, "package"] = frame.loc[missing_package].apply(_package_key, axis=1)
+    frame["match_key"] = frame.apply(_match_key, axis=1)
     frame["missing_price"] = frame["unit_rate"].isna() | frame["total_amount"].isna()
     return frame
 
@@ -59,6 +59,8 @@ def build_comparison(data: pd.DataFrame, excluded_outliers: set[str] | None = No
         unit=("unit", "first"),
         quantity=("quantity", "first"),
         package=("package", "first"),
+        file_name=("file_name", lambda values: ", ".join(sorted({str(value) for value in values.dropna() if str(value).strip()}))),
+        worksheet=("worksheet", lambda values: ", ".join(sorted({str(value) for value in values.dropna() if str(value).strip()}))),
         missing_prices=("missing_price", "sum"),
         outlier_count=("is_outlier", "sum"),
         excluded_outliers=("excluded_outlier", "sum"),
@@ -121,7 +123,7 @@ def package_summary(data: pd.DataFrame, excluded_outliers: set[str] | None = Non
 def missing_items(data: pd.DataFrame) -> pd.DataFrame:
     """Return rows with missing unit rates or totals."""
     prepared = prepare_boq(data)
-    return prepared[prepared["missing_price"]][["supplier", "package", "item_no", "description", "unit", "quantity", "unit_rate", "total_amount"]]
+    return prepared[prepared["missing_price"]][["supplier", "package", "item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "file_name", "worksheet"]]
 
 
 def detect_outliers(data: pd.DataFrame) -> pd.DataFrame:
@@ -136,7 +138,7 @@ def detect_outliers(data: pd.DataFrame) -> pd.DataFrame:
     mask = (priced["priced_suppliers"] >= OUTLIER_MIN_PRICED_SUPPLIERS) & (priced["total_amount"] > priced["median_price"] * OUTLIER_RATIO_THRESHOLD)
     outliers = priced[mask].copy()
     outliers["outlier_key"] = outliers["match_key"] + "|" + outliers["supplier"]
-    return outliers[["outlier_key", "supplier", "package", "item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "median_price", "variance_to_median_percent"]]
+    return outliers[["outlier_key", "supplier", "package", "item_no", "description", "unit", "quantity", "unit_rate", "total_amount", "file_name", "worksheet", "median_price", "variance_to_median_percent"]]
 
 
 def dashboard_metrics(data: pd.DataFrame, uploaded_file_count: int = 0, excluded_outliers: set[str] | None = None) -> dict[str, object]:
@@ -171,7 +173,8 @@ def _match_key(row: pd.Series) -> str:
     item_no = _clean(row.get("item_no"))
     description = _clean(row.get("description"))
     unit = _clean(row.get("unit"))
-    return f"item:{item_no}|unit:{unit}" if item_no else f"desc:{description}|unit:{unit}"
+    package = _clean(row.get("package"))
+    return f"package:{package}|item:{item_no}|desc:{description}|unit:{unit}"
 
 
 def _clean(value: object) -> str:

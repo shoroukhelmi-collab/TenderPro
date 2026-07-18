@@ -7,7 +7,7 @@ from typing import Iterable
 
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    "item_no": ("item no", "item", "item number", "item code", "code", "boq item", "ref", "reference", "no", "no", "sl no", "s no", "serial no"),
+    "item_no": ("item no", "item", "item number", "item code", "item no code", "item number code", "item item no code", "item no item code", "code", "boq item", "ref", "reference", "no", "no", "sl no", "s no", "serial no"),
     "description": ("description", "item description", "desc", "scope", "work description", "particulars", "item description of works"),
     "unit": ("unit", "uom", "measure", "unit of measure", "units", "u o m"),
     "quantity": ("quantity", "qty", "q ty", "quant", "boq qty", "qty boq"),
@@ -72,6 +72,8 @@ def _matches_item_number_header(cleaned_column: str, tokens: set[str]) -> bool:
     if cleaned_column in {"item", "code", "ref", "reference", "no", "number"}:
         return True
     if tokens == {"item", "no"} or tokens == {"item", "number"}:
+        return True
+    if {"item", "no", "code"}.issubset(tokens) or {"item", "number", "code"}.issubset(tokens):
         return True
     if tokens == {"item", "code"} or tokens == {"boq", "item"}:
         return True

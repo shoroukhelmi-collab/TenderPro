@@ -212,3 +212,28 @@ def test_code_column_populates_item_number_with_item_description_present():
 
 def test_supplier_name_removes_generic_filename_noise_without_hardcoding_supplier():
     assert detect_supplier_name("987654 Alpha-Beta_Commercial BOQ Quotation R1.xlsx") == "Alpha Beta"
+
+
+def test_reviewed_excels_use_explicit_supplier_group_name_for_multiple_files():
+    from modules.excel_reader import read_reviewed_excels
+
+    hvac = _book({"HVAC": [["Code", "Description", "Unit", "Qty", "Rate", "Amount"], ["H1", "Ductwork", "m", 2, 5, 10]]}, name="HVAC.xlsx")
+    plumbing = _book({"Plumbing": [["Code", "Description", "Unit", "Qty", "Rate", "Amount"], ["P1", "Pipework", "m", 3, 7, 21]]}, name="Plumbing.xlsx")
+    reviews = [inspect_excel_file(hvac, supplier_name="Hazek"), inspect_excel_file(plumbing, supplier_name="Hazek")]
+
+    data = read_reviewed_excels([hvac, plumbing], reviews)
+
+    assert data["supplier"].tolist() == ["Hazek", "Hazek"]
+    assert data["file_name"].tolist() == ["HVAC.xlsx", "Plumbing.xlsx"]
+    assert data["worksheet"].tolist() == ["HVAC", "Plumbing"]
+
+
+def test_item_no_code_header_populates_item_number():
+    file = _book({"BOQ": [
+        ["ITEM / Item No / Code", "Description", "Unit", "Qty", "Rate", "Amount"],
+        ["FA-01", "Smoke detector", "nr", 4, 10, 40],
+    ]})
+
+    data = read_excel_file(file)
+
+    assert data.iloc[0]["item_no"] == "FA-01"

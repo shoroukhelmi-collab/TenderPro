@@ -77,3 +77,20 @@ def test_package_missing_and_dashboard_summaries_are_generic():
     assert len(missing) == 1
     assert metrics["total_uploaded_files"] == 2
     assert metrics["missing_prices"] == 1
+
+
+def test_comparison_matches_by_package_item_description_and_unit():
+    data = pd.DataFrame([
+        {"package": "HVAC", "item_no": "1", "description": "Fan", "unit": "ea", "quantity": 1, "unit_rate": 10, "total_amount": 10, "supplier": "Hazek", "file_name": "HVAC.xlsx", "worksheet": "BOQ"},
+        {"package": "Fire Alarm", "item_no": "1", "description": "Fan", "unit": "ea", "quantity": 1, "unit_rate": 20, "total_amount": 20, "supplier": "Hazek", "file_name": "Fire Alarm.xlsx", "worksheet": "BOQ"},
+        {"package": "HVAC", "item_no": "1", "description": "Fan", "unit": "ea", "quantity": 1, "unit_rate": 9, "total_amount": 9, "supplier": "Orascom", "file_name": "HVAC.xlsx", "worksheet": "BOQ"},
+        {"package": "HVAC", "item_no": "1", "description": "Different fan", "unit": "ea", "quantity": 1, "unit_rate": 8, "total_amount": 8, "supplier": "Other", "file_name": "HVAC.xlsx", "worksheet": "BOQ"},
+    ])
+
+    result = build_comparison(data)
+
+    assert len(result) == 3
+    hvac_fan = result[(result["package"] == "HVAC") & (result["description"] == "Fan")].iloc[0]
+    assert hvac_fan["lowest_supplier"] == "Orascom"
+    assert "file_name" in result.columns
+    assert "worksheet" in result.columns

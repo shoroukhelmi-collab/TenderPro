@@ -124,6 +124,46 @@ def test_price_columns_detect_with_currency_suffixes():
     assert data.iloc[0]["total_amount"] == 125
 
 
+def test_multi_row_rate_and_amount_currency_headers_are_merged_and_read():
+    file = _book({"Commercial BOQ": [
+        ["Item No", "Description", "UOM", "Qty", "Rate", "Amount"],
+        [None, None, None, None, "USD", "USD"],
+        ["1", "Concrete foundations", "m3", 8, 100, 800],
+    ]})
+
+    review = inspect_excel_file(file)
+    worksheet = review.worksheets[0]
+    data = read_excel_file(file, review.supplier_name, "Commercial BOQ", worksheet.header_row - 1, worksheet.column_mapping)
+
+    assert "Rate USD" in worksheet.columns
+    assert "Amount USD" in worksheet.columns
+    assert worksheet.column_mapping["unit_rate"] == "Rate USD"
+    assert worksheet.column_mapping["total_amount"] == "Amount USD"
+    assert data.iloc[0]["unit_rate"] == 100
+    assert data.iloc[0]["total_amount"] == 800
+
+
+def test_merged_multi_row_commercial_headers_are_expanded_without_modifying_workbook():
+    file = _book({"BOQ": [
+        [None, None, None, None, "Commercial", None],
+        ["Item", "Particulars", "Unit", "Quantity", "Unit Price", "Line Total"],
+        [None, None, None, None, "AED", "AED"],
+        ["A1", "Blockwork", "m2", 12, 15, 180],
+    ]}, merges={"BOQ": ["E1:F1"]})
+    original_bytes = file.getvalue()
+
+    review = inspect_excel_file(file)
+    worksheet = review.worksheets[0]
+    data = read_excel_file(file, review.supplier_name, "BOQ", worksheet.header_row - 1, worksheet.column_mapping)
+
+    assert file.getvalue() == original_bytes
+    assert worksheet.column_mapping["unit_rate"] == "Commercial Unit Price AED"
+    assert worksheet.column_mapping["total_amount"] == "Commercial Line Total AED"
+    assert data.iloc[0]["description"] == "Blockwork"
+    assert data.iloc[0]["unit_rate"] == 15
+    assert data.iloc[0]["total_amount"] == 180
+
+
 def test_non_package_headings_are_not_inherited_as_packages():
     file = _book({"BOQ": [
         ["Item", "Description", "Unit", "Quantity", "Unit Rate", "Total"],

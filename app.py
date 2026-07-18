@@ -39,6 +39,7 @@ reviews: list[WorkbookReview] = []
 if uploaded_files:
     st.subheader("File review")
     st.caption("Confirm detected supplier names and review every worksheet before previewing the imported BOQ rows.")
+    summary_rows = []
     for index, uploaded_file in enumerate(uploaded_files, start=1):
         uploaded_file.seek(0)
         review = inspect_excel_file(uploaded_file)
@@ -65,10 +66,37 @@ if uploaded_files:
                         index=selected_index,
                         key=f"mapping_{index}_{sheet_index}_{canonical}",
                     )
+                package_current = sheet.column_mapping.get("package")
+                package_index = column_options.index(package_current) if package_current in column_options else 0
+                mapping["package"] = st.selectbox(
+                    "Package Mapping",
+                    column_options,
+                    index=package_index,
+                    key=f"mapping_{index}_{sheet_index}_package",
+                    help="Choose a package/section column, or leave blank to inherit valid section headings.",
+                )
+                if not any(mapping.get(col) for col in ("unit_rate", "total_amount")):
+                    st.warning("No Unit Rate or Total Amount column detected for this worksheet. It will be excluded from comparison until one is mapped.")
                 st.metric("Imported item count", sheet.imported_rows)
                 st.metric("Excluded row count", sheet.excluded_rows)
-                edited_sheets.append(type(sheet)(sheet.sheet_name, int(header_row), mapping, sheet.imported_rows, sheet.excluded_rows, sheet.columns, sheet.package_source, sheet.section_headings))
+                package_source = mapping["package"] or "Section headings"
+                summary_rows.append({
+                    "Supplier name": supplier_name,
+                    "File name": review.file_name,
+                    "Worksheet": sheet.sheet_name,
+                    "Header row": int(header_row),
+                    "Imported rows": sheet.imported_rows,
+                    "Excluded rows": sheet.excluded_rows,
+                    "Detected Unit Rate column": mapping.get("unit_rate") or "Missing",
+                    "Detected Total Amount column": mapping.get("total_amount") or "Missing",
+                    "Detected Package source": package_source,
+                })
+                edited_sheets.append(type(sheet)(sheet.sheet_name, int(header_row), mapping, sheet.imported_rows, sheet.excluded_rows, sheet.columns, package_source, sheet.section_headings))
             reviews.append(WorkbookReview(review.file_name, supplier_name, review.worksheet_names, review.selected_worksheet, review.header_row, review.column_mapping, review.imported_rows, review.columns, review.excluded_rows, review.package_source, review.section_headings, edited_sheets))
+    st.subheader("Import detection summary")
+    st.dataframe(summary_rows, use_container_width=True)
+    if any(row["Detected Unit Rate column"] == "Missing" and row["Detected Total Amount column"] == "Missing" for row in summary_rows):
+        st.warning("One or more worksheets have no detected price columns and will not be included in the comparison until Unit Rate or Total Amount is mapped.")
     for uploaded_file in uploaded_files:
         uploaded_file.seek(0)
     preview_data = read_reviewed_excels(uploaded_files, reviews)
@@ -76,7 +104,10 @@ if uploaded_files:
     st.caption("Review the first 20 commercial BOQ items. The comparison will not be generated until you confirm this preview.")
     st.dataframe(preview_data.head(20), use_container_width=True)
     confirm_preview = st.checkbox("I confirm the preview is ready for comparison", key="confirm_preview")
-    if st.button("Generate Comparison", type="primary", disabled=not confirm_preview):
+    missing_all_prices = preview_data.empty or (preview_data["unit_rate"].isna().all() and preview_data["total_amount"].isna().all())
+    if missing_all_prices:
+        st.error("Comparison cannot be generated because no Unit Rate or Total Amount columns are mapped in the included files.")
+    if st.button("Generate Comparison", type="primary", disabled=(not confirm_preview or missing_all_prices)):
         st.session_state.comparison_generated = True
 
     if st.session_state.comparison_generated and confirm_preview:

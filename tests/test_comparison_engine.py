@@ -1,6 +1,6 @@
 import pandas as pd
 
-from modules.comparison_engine import build_comparison, supplier_ranking
+from modules.comparison_engine import build_comparison, dashboard_metrics, detect_outliers, missing_items, package_summary, supplier_ranking
 
 
 def test_build_comparison_shows_lowest_price_and_missing_prices():
@@ -43,3 +43,37 @@ def test_supplier_ranking_orders_by_total_and_missing_prices():
     assert ranking.iloc[0]["supplier"] == "Supplier 2"
     assert ranking.iloc[0]["rank"] == 1
     assert ranking.iloc[0]["missing_prices"] == 1
+
+
+
+def test_outliers_can_be_excluded_without_removing_raw_rows():
+    data = pd.DataFrame([
+        {"item_no": "1.01", "description": "A", "unit": "ea", "quantity": 1, "unit_rate": 10, "total_amount": 10, "supplier": "Supplier 1"},
+        {"item_no": "1.01", "description": "A", "unit": "ea", "quantity": 1, "unit_rate": 11, "total_amount": 11, "supplier": "Supplier 2"},
+        {"item_no": "1.01", "description": "A", "unit": "ea", "quantity": 1, "unit_rate": 100, "total_amount": 100, "supplier": "Supplier 3"},
+    ])
+
+    outliers = detect_outliers(data)
+    excluded_key = outliers.iloc[0]["outlier_key"]
+    comparison = build_comparison(data, {excluded_key})
+
+    assert len(outliers) == 1
+    assert comparison.iloc[0]["outlier_count"] == 1
+    assert comparison.iloc[0]["excluded_outliers"] == 1
+    assert data["total_amount"].sum() == 121
+
+
+def test_package_missing_and_dashboard_summaries_are_generic():
+    data = pd.DataFrame([
+        {"item_no": "A-1", "description": "Alpha", "unit": "ea", "quantity": 1, "unit_rate": 10, "total_amount": 10, "supplier": "Supplier 1"},
+        {"item_no": "A-1", "description": "Alpha", "unit": "ea", "quantity": 1, "unit_rate": None, "total_amount": None, "supplier": "Supplier 2"},
+    ])
+
+    packages = package_summary(data)
+    missing = missing_items(data)
+    metrics = dashboard_metrics(data, uploaded_file_count=2)
+
+    assert packages.iloc[0]["package"] == "a"
+    assert len(missing) == 1
+    assert metrics["total_uploaded_files"] == 2
+    assert metrics["missing_prices"] == 1

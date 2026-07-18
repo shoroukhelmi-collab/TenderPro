@@ -7,7 +7,7 @@ from typing import Iterable
 
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
-    "item_no": ("item no", "item", "item number", "item code", "code", "boq item", "ref", "reference", "no"),
+    "item_no": ("item no", "item", "item number", "item code", "code", "boq item", "ref", "reference", "no", "no", "sl no", "s no", "serial no"),
     "description": ("description", "item description", "desc", "scope", "work description", "particulars", "item description of works"),
     "unit": ("unit", "uom", "measure", "unit of measure", "units", "u o m"),
     "quantity": ("quantity", "qty", "q ty", "quant", "boq qty", "qty boq"),
@@ -55,8 +55,26 @@ def _matches_alias(cleaned_column: str, aliases: set[str], canonical: str) -> bo
     if cleaned_column in NEGATIVE_PRICE_HEADERS:
         return False
     tokens = set(cleaned_column.split())
+    if canonical == "item_no":
+        return _matches_item_number_header(cleaned_column, tokens)
     if canonical == "unit_rate":
         return ("rate" in tokens or "price" in tokens or {"unit", "cost"}.issubset(tokens)) and "total" not in tokens
     if canonical == "total_amount":
         return "amount" in tokens or "total" in tokens or {"total", "price"}.issubset(tokens) or {"total", "cost"}.issubset(tokens)
     return any(alias and (cleaned_column.startswith(alias + " ") or alias in cleaned_column) for alias in aliases)
+
+
+def _matches_item_number_header(cleaned_column: str, tokens: set[str]) -> bool:
+    """Return True for generic item-number/code headers, not description headers."""
+    descriptive_tokens = {"description", "desc", "particulars", "scope", "work", "works"}
+    if tokens & descriptive_tokens:
+        return False
+    if cleaned_column in {"item", "code", "ref", "reference", "no", "number"}:
+        return True
+    if tokens == {"item", "no"} or tokens == {"item", "number"}:
+        return True
+    if tokens == {"item", "code"} or tokens == {"boq", "item"}:
+        return True
+    if tokens in ({"sl", "no"}, {"s", "no"}, {"serial", "no"}):
+        return True
+    return cleaned_column.startswith(("item no ", "item number ", "item code ", "boq item ", "serial no ", "sl no ", "s no "))

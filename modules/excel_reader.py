@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import BinaryIO, Iterable
 
 import pandas as pd
 
 from modules.mapping import REQUIRED_COLUMNS, detect_columns
+
+LOGGER = logging.getLogger(__name__)
 
 SAMPLE_FILES = {
     "Enext_BOQ.xlsx": [
@@ -23,6 +26,127 @@ SAMPLE_FILES = {
         {"Code": "1.04", "Description": "Copper cable 4C x 16 sq.mm", "Unit": "m", "Quantity": 450, "Unit Rate": 19.1, "Vendor": "Valtria"},
     ],
 }
+
+
+class ExcelReader:
+    """Read TenderPro BOQ Excel workbooks into one normalized dataframe.
+
+    The reader accepts one or more `.xlsx` files, reads every worksheet in each
+    workbook, auto-detects the header row, forward-fills merged-cell values, and
+    logs invalid or unreadable sheets without raising to the caller.
+    """
+
+    def __init__(self, logger: logging.Logger | None = None) -> None:
+        """Initialize the reader.
+
+        Args:
+            logger: Optional logger used for recoverable import errors.
+        """
+        self.logger = logger or LOGGER
+
+    def load(self, files: str | Path | Iterable[str | Path]) -> pd.DataFrame:
+        """Load one or multiple Excel files and return normalized TenderPro rows.
+
+        Args:
+            files: A single workbook path or an iterable of workbook paths.
+
+        Returns:
+            A dataframe with TenderPro's canonical columns plus `source_file`
+            and `worksheet`. Unreadable files and empty sheets are skipped.
+        """
+        paths = self._coerce_paths(files)
+        frames: list[pd.DataFrame] = []
+
+        for path in paths:
+            try:
+                workbook = pd.ExcelFile(path, engine="openpyxl")
+            except Exception as exc:  # pragma: no cover - exact parser errors vary
+                self.logger.exception("Failed to open Excel file %s: %s", path, exc)
+                continue
+
+            for sheet_name in workbook.sheet_names:
+                sheet_frame = self._read_sheet(workbook, sheet_name, path)
+                if not sheet_frame.empty:
+                    frames.append(sheet_frame)
+
+        columns = [*REQUIRED_COLUMNS, "source_file", "worksheet"]
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=columns)
+
+    def _read_sheet(self, workbook: pd.ExcelFile, sheet_name: str, path: Path) -> pd.DataFrame:
+        """Read and normalize one worksheet, returning an empty frame on errors."""
+        try:
+            raw = pd.read_excel(workbook, sheet_name=sheet_name, header=None, dtype=object)
+        except Exception as exc:  # pragma: no cover - exact parser errors vary
+            self.logger.exception("Failed to read sheet %s in %s: %s", sheet_name, path, exc)
+            return pd.DataFrame()
+
+        raw = raw.dropna(how="all")
+        if raw.empty:
+            self.logger.info("Skipping empty sheet %s in %s", sheet_name, path)
+            return pd.DataFrame()
+
+        raw = raw.ffill(axis=0)
+        header_index = self._detect_header_row(raw)
+        if header_index is None:
+            self.logger.error("Could not detect a header row in sheet %s of %s", sheet_name, path)
+            return pd.DataFrame()
+
+        headers = raw.loc[header_index].tolist()
+        data = raw.loc[header_index + 1 :].copy()
+        data.columns = [self._stringify_header(header, index) for index, header in enumerate(headers)]
+        data = data.dropna(how="all")
+        if data.empty:
+            self.logger.info("Sheet %s in %s has headers but no data", sheet_name, path)
+            return pd.DataFrame()
+
+        normalized = self._normalize(data, path, sheet_name)
+        return normalized.dropna(subset=["item_no", "description"], how="all")
+
+    def _detect_header_row(self, frame: pd.DataFrame) -> int | None:
+        """Return the row index that best matches TenderPro's known headers."""
+        best_index: int | None = None
+        best_score = 0
+        for index, row in frame.iterrows():
+            columns = [self._stringify_header(value, position) for position, value in enumerate(row.tolist())]
+            score = len(detect_columns(columns))
+            if score > best_score:
+                best_index = int(index)
+                best_score = score
+        return best_index if best_score >= 2 else None
+
+    def _normalize(self, raw: pd.DataFrame, source_path: Path, sheet_name: str) -> pd.DataFrame:
+        """Normalize vendor-specific sheet columns to TenderPro's canonical schema."""
+        detected = detect_columns(raw.columns)
+        normalized = pd.DataFrame(index=raw.index)
+        for canonical in REQUIRED_COLUMNS:
+            source_column = detected.get(canonical)
+            normalized[canonical] = raw[source_column] if source_column else pd.NA
+
+        fallback_vendor = source_path.stem.replace("_", " ").replace(" BOQ", "").strip()
+        normalized["vendor"] = normalized["vendor"].fillna(fallback_vendor)
+        normalized["source_file"] = source_path.name
+        normalized["worksheet"] = sheet_name
+
+        for numeric_column in ("quantity", "unit_rate", "total_amount"):
+            normalized[numeric_column] = pd.to_numeric(normalized[numeric_column], errors="coerce")
+
+        missing_total = normalized["total_amount"].isna() & normalized["quantity"].notna() & normalized["unit_rate"].notna()
+        normalized.loc[missing_total, "total_amount"] = normalized.loc[missing_total, "quantity"] * normalized.loc[missing_total, "unit_rate"]
+        return normalized.reset_index(drop=True)
+
+    @staticmethod
+    def _coerce_paths(files: str | Path | Iterable[str | Path]) -> list[Path]:
+        """Return a list of paths whether the input is scalar or iterable."""
+        if isinstance(files, (str, Path)):
+            return [Path(files)]
+        return [Path(file) for file in files]
+
+    @staticmethod
+    def _stringify_header(value: object, fallback_index: int) -> str:
+        """Convert a worksheet cell value into a safe dataframe column name."""
+        if pd.isna(value):
+            return f"Unnamed: {fallback_index}"
+        return str(value).strip()
 
 
 def create_sample_files(directory: str | Path = "uploads") -> list[Path]:
@@ -60,27 +184,7 @@ def save_uploaded_files(files: Iterable[BinaryIO], directory: str | Path = "uplo
 
 def read_excel_file(path: str | Path) -> pd.DataFrame:
     """Read one BOQ spreadsheet and return canonical TenderPro columns."""
-    source_path = Path(path)
-    raw = pd.read_excel(source_path, engine="openpyxl")
-    raw = raw.dropna(how="all")
-    detected = detect_columns(raw.columns)
-
-    normalized = pd.DataFrame()
-    for canonical in REQUIRED_COLUMNS:
-        source_column = detected.get(canonical)
-        normalized[canonical] = raw[source_column] if source_column else pd.NA
-
-    fallback_vendor = source_path.stem.replace("_", " ").replace(" BOQ", "").strip()
-    normalized["vendor"] = normalized["vendor"].fillna(fallback_vendor)
-    normalized["source_file"] = source_path.name
-
-    for numeric_column in ("quantity", "unit_rate", "total_amount"):
-        normalized[numeric_column] = pd.to_numeric(normalized[numeric_column], errors="coerce")
-
-    missing_total = normalized["total_amount"].isna() & normalized["quantity"].notna() & normalized["unit_rate"].notna()
-    normalized.loc[missing_total, "total_amount"] = normalized.loc[missing_total, "quantity"] * normalized.loc[missing_total, "unit_rate"]
-
-    return normalized.dropna(subset=["item_no", "description"], how="all")
+    return ExcelReader().load(path).drop(columns=["worksheet"], errors="ignore")
 
 
 def read_all_excels(directory: str | Path = "uploads") -> pd.DataFrame:
@@ -88,5 +192,4 @@ def read_all_excels(directory: str | Path = "uploads") -> pd.DataFrame:
     paths = sorted(Path(directory).glob("*.xlsx"))
     if not paths:
         paths = create_sample_files(directory)
-    frames = [read_excel_file(path) for path in paths]
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=REQUIRED_COLUMNS)
+    return ExcelReader().load(paths).drop(columns=["worksheet"], errors="ignore")

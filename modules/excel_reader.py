@@ -8,10 +8,13 @@ from pathlib import Path
 from typing import BinaryIO, Iterable
 
 import pandas as pd
+from openpyxl import load_workbook
 from modules.mapping import REQUIRED_COLUMNS, detect_columns
 
 COMMERCIAL_COLUMNS = (*REQUIRED_COLUMNS, "package", "supplier")
 HEADER_SCAN_ROWS = 60
+MIN_HEADER_ROWS = 1
+MAX_HEADER_ROWS = 5
 TOTAL_PATTERNS = re.compile(r"\b(sub\s*total|subtotal|grand\s*total|total|summary|carry\s*forward)\b", re.I)
 NOTE_PATTERNS = re.compile(r"\b(note|notes|description of works|general requirement|preamble|specification|specifications|tender|boq|bill of quantities|method of measurements?|methods of measurements?|scope of work)\b", re.I)
 REVISION_PATTERNS = re.compile(r"\b(rev(?:ision)?\.?\s*[a-z0-9]+|r\d+|v\d+|final|draft|copy|priced|quote|quotation|boq|bill of quantities)\b", re.I)
@@ -145,20 +148,122 @@ def read_all_excel_sheets(file: str | Path | BinaryIO, supplier_name: str | None
 
 
 def _detect_header(excel: pd.ExcelFile, sheet: str | int) -> tuple[int, list[str], dict[str, str | None]]:
-    preview = pd.read_excel(excel, sheet_name=sheet, header=None, nrows=HEADER_SCAN_ROWS).ffill(axis=1)
-    best = (0, [], {}, -1)
+    preview = _read_preview_with_merged_headers(excel, sheet)
+    best = (0, [], {}, -1, 1)
     for row_index in range(len(preview)):
-        values = [_clean_cell(value) for value in preview.iloc[row_index].tolist()]
-        mapping = detect_columns(values)
-        score = len(mapping) * 3 + int("description" in mapping) + int(any(k in mapping for k in ("quantity", "unit_rate", "total_amount")))
-        if score > best[3]:
-            best = (row_index, [value for value in values if value], {c: mapping.get(c) for c in REQUIRED_COLUMNS}, score)
+        for header_rows, values in _logical_header_candidates(preview, row_index):
+            mapping = detect_columns(values)
+            numeric_cells = _numeric_cell_count(preview.iloc[row_index : row_index + header_rows])
+            repeated_title_rows = _repeated_title_row_count(preview.iloc[row_index : row_index + header_rows])
+            score = (
+                len(mapping) * 3
+                + int("description" in mapping)
+                + int(any(k in mapping for k in ("quantity", "unit_rate", "total_amount")))
+                + int("unit_rate" in mapping and "total_amount" in mapping)
+                + (header_rows - 1 if "unit_rate" in mapping and "total_amount" in mapping else 0)
+                - numeric_cells * 2
+                - repeated_title_rows * 10
+            )
+            if score > best[3]:
+                best = (row_index, [value for value in values if value], {c: mapping.get(c) for c in REQUIRED_COLUMNS}, score, header_rows)
     return best[0], best[1], best[2]
+
+
+def _read_preview_with_merged_headers(excel: pd.ExcelFile, sheet: str | int) -> pd.DataFrame:
+    """Read a preview while expanding merged cell values without saving the workbook."""
+    source = excel._io  # pandas keeps the original path/file object here.
+    _rewind(source)
+    workbook = load_workbook(source, read_only=False, data_only=True)
+    worksheet = workbook.worksheets[sheet] if isinstance(sheet, int) else workbook[sheet]
+    max_row = min(worksheet.max_row, HEADER_SCAN_ROWS)
+    max_column = worksheet.max_column
+    values = [[worksheet.cell(row=row, column=column).value for column in range(1, max_column + 1)] for row in range(1, max_row + 1)]
+
+    for merged_range in worksheet.merged_cells.ranges:
+        top_value = worksheet.cell(row=merged_range.min_row, column=merged_range.min_col).value
+        if merged_range.min_row > max_row or top_value is None:
+            continue
+        for row in range(merged_range.min_row, min(merged_range.max_row, max_row) + 1):
+            for column in range(merged_range.min_col, merged_range.max_col + 1):
+                values[row - 1][column - 1] = top_value
+
+    workbook.close()
+    _rewind(source)
+    return pd.DataFrame(values).ffill(axis=1)
+
+
+def _logical_header_candidates(preview: pd.DataFrame, row_index: int) -> Iterable[tuple[int, list[str]]]:
+    for header_rows in range(MIN_HEADER_ROWS, MAX_HEADER_ROWS + 1):
+        end = row_index + header_rows
+        if end > len(preview):
+            break
+        header_block = preview.iloc[row_index:end]
+        yield header_rows, _merge_stacked_headers(header_block)
+
+
+def _merge_stacked_headers(header_block: pd.DataFrame) -> list[str]:
+    logical_headers: list[str] = []
+    for column in header_block.columns:
+        parts: list[str] = []
+        for value in header_block[column].tolist():
+            cleaned = _clean_cell(value)
+            if cleaned and cleaned not in parts:
+                parts.append(cleaned)
+        logical_headers.append(" ".join(parts))
+    return _unique_headers(logical_headers)
+
+
+def _numeric_cell_count(header_block: pd.DataFrame) -> int:
+    count = 0
+    for value in header_block.to_numpy().flatten():
+        if _clean_cell(value) and pd.notna(pd.to_numeric(value, errors="coerce")):
+            count += 1
+    return count
+
+
+def _repeated_title_row_count(header_block: pd.DataFrame) -> int:
+    count = 0
+    minimum_repeated_cells = max(2, len(header_block.columns) // 2)
+    for _, row in header_block.iterrows():
+        values = [_clean_cell(value) for value in row.tolist() if _clean_cell(value)]
+        if len(values) >= minimum_repeated_cells and len(set(values)) == 1:
+            count += 1
+    return count
+
+
+def _unique_headers(headers: Iterable[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    unique: list[str] = []
+    for index, header in enumerate(headers, start=1):
+        name = header or f"Unnamed {index}"
+        count = counts.get(name, 0)
+        counts[name] = count + 1
+        unique.append(f"{name}.{count}" if count else name)
+    return unique
+
+
+def _detect_header_rows_for_read(file: str | Path | BinaryIO, sheet: str | int, header_row: int, mapping: dict[str, str | None]) -> tuple[int, list[str]]:
+    _rewind(file)
+    excel = pd.ExcelFile(file, engine="openpyxl")
+    preview = _read_preview_with_merged_headers(excel, sheet)
+    expected_sources = {source for source in mapping.values() if source}
+    best = (1, _merge_stacked_headers(preview.iloc[header_row : header_row + 1]), -1)
+    for header_rows, columns in _logical_header_candidates(preview, header_row):
+        matched = len(expected_sources.intersection(columns))
+        mapping_score = len(detect_columns(columns))
+        score = matched * 5 + mapping_score + (header_rows - 1 if matched else 0)
+        if score > best[2]:
+            best = (header_rows, columns, score)
+    _rewind(file)
+    return best[0], best[1]
 
 
 def _read_sheet(file: str | Path | BinaryIO, supplier: str, sheet: str | int, header_row: int, mapping: dict[str, str | None]) -> tuple[pd.DataFrame, int, list[str]]:
     _rewind(file)
-    raw = pd.read_excel(file, engine="openpyxl", sheet_name=sheet, header=header_row).ffill(axis=1)
+    header_rows, columns = _detect_header_rows_for_read(file, sheet, header_row, mapping)
+    raw = pd.read_excel(file, engine="openpyxl", sheet_name=sheet, header=None, skiprows=header_row + header_rows)
+    raw.columns = columns[: len(raw.columns)]
+    raw = raw.ffill(axis=1)
     raw = raw.dropna(how="all")
     normalized = pd.DataFrame(index=raw.index)
     for canonical in REQUIRED_COLUMNS:
